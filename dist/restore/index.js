@@ -2705,6 +2705,7 @@ var Inputs;
     Inputs["Key"] = "key";
     Inputs["Path"] = "path";
     Inputs["RestoreKeys"] = "restore-keys";
+    Inputs["RestoreRetryAttempts"] = "restore-retry-attempts";
 })(Inputs = exports.Inputs || (exports.Inputs = {}));
 var Outputs;
 (function (Outputs) {
@@ -2791,6 +2792,11 @@ const cacheHttpClient = __importStar(__webpack_require__(154));
 const constants_1 = __webpack_require__(694);
 const tar_1 = __webpack_require__(943);
 const utils = __importStar(__webpack_require__(443));
+function sleep(ms) {
+    return __awaiter(this, void 0, void 0, function* () {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    });
+}
 function run() {
     var _a;
     return __awaiter(this, void 0, void 0, function* () {
@@ -2828,28 +2834,33 @@ function run() {
                     return;
                 }
             }
-            try {
-                const cacheEntry = yield cacheHttpClient.getCacheEntry(keys);
-                if (!((_a = cacheEntry) === null || _a === void 0 ? void 0 : _a.archiveLocation)) {
-                    core.info(`Cache not found for input keys: ${keys.join(", ")}.`);
-                    return;
+            const retryAttempts = parseInt(core.getInput(constants_1.Inputs.RestoreRetryAttempts));
+            for (let i = 0; i < retryAttempts; i++) {
+                core.info(`Restoring cache. Attempt ${i + 1} of ${retryAttempts}`);
+                try {
+                    const cacheEntry = yield cacheHttpClient.getCacheEntry(keys);
+                    if (!((_a = cacheEntry) === null || _a === void 0 ? void 0 : _a.archiveLocation)) {
+                        core.info(`Cache not found for input keys: ${keys.join(", ")}.`);
+                        return;
+                    }
+                    const archivePath = path.join(yield utils.createTempDirectory(), "cache.tgz");
+                    core.debug(`Archive Path: ${archivePath}`);
+                    // Store the cache result
+                    utils.setCacheState(cacheEntry);
+                    // Download the cache from the cache entry
+                    yield cacheHttpClient.downloadCache(cacheEntry.archiveLocation, archivePath);
+                    const archiveFileSize = utils.getArchiveFileSize(archivePath);
+                    core.info(`Cache Size: ~${Math.round(archiveFileSize / (1024 * 1024))} MB (${archiveFileSize} B)`);
+                    yield tar_1.extractTar(archivePath, cachePath);
+                    const isExactKeyMatch = utils.isExactKeyMatch(primaryKey, cacheEntry);
+                    utils.setCacheHitOutput(isExactKeyMatch);
+                    core.info(`Cache restored from key: ${cacheEntry && cacheEntry.cacheKey}`);
+                    break;
                 }
-                const archivePath = path.join(yield utils.createTempDirectory(), "cache.tgz");
-                core.debug(`Archive Path: ${archivePath}`);
-                // Store the cache result
-                utils.setCacheState(cacheEntry);
-                // Download the cache from the cache entry
-                yield cacheHttpClient.downloadCache(cacheEntry.archiveLocation, archivePath);
-                const archiveFileSize = utils.getArchiveFileSize(archivePath);
-                core.info(`Cache Size: ~${Math.round(archiveFileSize / (1024 * 1024))} MB (${archiveFileSize} B)`);
-                yield tar_1.extractTar(archivePath, cachePath);
-                const isExactKeyMatch = utils.isExactKeyMatch(primaryKey, cacheEntry);
-                utils.setCacheHitOutput(isExactKeyMatch);
-                core.info(`Cache restored from key: ${cacheEntry && cacheEntry.cacheKey}`);
-            }
-            catch (error) {
-                utils.logWarning(error.message);
-                utils.setCacheHitOutput(false);
+                catch (error) {
+                    utils.logWarning(error.message);
+                    utils.setCacheHitOutput(false);
+                }
             }
         }
         catch (error) {

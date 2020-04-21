@@ -2786,6 +2786,7 @@ var Inputs;
     Inputs["Key"] = "key";
     Inputs["Path"] = "path";
     Inputs["RestoreKeys"] = "restore-keys";
+    Inputs["RestoreRetryAttempts"] = "restore-retry-attempts";
 })(Inputs = exports.Inputs || (exports.Inputs = {}));
 var Outputs;
 (function (Outputs) {

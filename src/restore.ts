@@ -5,6 +5,10 @@ import { Events, Inputs, State } from "./constants";
 import { extractTar } from "./tar";
 import * as utils from "./utils/actionUtils";
 
+async function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 async function run(): Promise<void> {
     try {
         // Validate inputs, this can cause task failure
@@ -58,51 +62,57 @@ async function run(): Promise<void> {
             }
         }
 
-        try {
-            const cacheEntry = await cacheHttpClient.getCacheEntry(keys);
-            if (!cacheEntry?.archiveLocation) {
-                core.info(
-                    `Cache not found for input keys: ${keys.join(", ")}.`
+        const retryAttempts = parseInt(core.getInput(Inputs.RestoreRetryAttempts))
+        for (let i = 0; i < retryAttempts; i++) {
+            core.info(`Restoring cache. Attempt ${i + 1} of ${retryAttempts}`)
+            try {
+                const cacheEntry = await cacheHttpClient.getCacheEntry(keys);
+                if (!cacheEntry?.archiveLocation) {
+                    core.info(
+                        `Cache not found for input keys: ${keys.join(", ")}.`
+                    );
+                    return;
+                }
+
+                const archivePath = path.join(
+                    await utils.createTempDirectory(),
+                    "cache.tgz"
                 );
-                return;
+                core.debug(`Archive Path: ${archivePath}`);
+
+                // Store the cache result
+                utils.setCacheState(cacheEntry);
+
+                // Download the cache from the cache entry
+                await cacheHttpClient.downloadCache(
+                    cacheEntry.archiveLocation,
+                    archivePath
+                );
+
+                const archiveFileSize = utils.getArchiveFileSize(archivePath);
+                core.info(
+                    `Cache Size: ~${Math.round(
+                        archiveFileSize / (1024 * 1024)
+                    )} MB (${archiveFileSize} B)`
+                );
+
+                await extractTar(archivePath, cachePath);
+
+                const isExactKeyMatch = utils.isExactKeyMatch(
+                    primaryKey,
+                    cacheEntry
+                );
+                utils.setCacheHitOutput(isExactKeyMatch);
+
+                core.info(
+                    `Cache restored from key: ${cacheEntry && cacheEntry.cacheKey}`
+                );
+
+                break
+            } catch (error) {
+                utils.logWarning(error.message);
+                utils.setCacheHitOutput(false);
             }
-
-            const archivePath = path.join(
-                await utils.createTempDirectory(),
-                "cache.tgz"
-            );
-            core.debug(`Archive Path: ${archivePath}`);
-
-            // Store the cache result
-            utils.setCacheState(cacheEntry);
-
-            // Download the cache from the cache entry
-            await cacheHttpClient.downloadCache(
-                cacheEntry.archiveLocation,
-                archivePath
-            );
-
-            const archiveFileSize = utils.getArchiveFileSize(archivePath);
-            core.info(
-                `Cache Size: ~${Math.round(
-                    archiveFileSize / (1024 * 1024)
-                )} MB (${archiveFileSize} B)`
-            );
-
-            await extractTar(archivePath, cachePath);
-
-            const isExactKeyMatch = utils.isExactKeyMatch(
-                primaryKey,
-                cacheEntry
-            );
-            utils.setCacheHitOutput(isExactKeyMatch);
-
-            core.info(
-                `Cache restored from key: ${cacheEntry && cacheEntry.cacheKey}`
-            );
-        } catch (error) {
-            utils.logWarning(error.message);
-            utils.setCacheHitOutput(false);
         }
     } catch (error) {
         core.setFailed(error.message);
